@@ -1,0 +1,124 @@
+name: export-and-branch-solution
+# Export solution from DEV environment
+#  unpack it and prepare, commit and push a git branch with the changes
+
+on:
+  workflow_dispatch:
+    inputs:
+      # Change this value
+      solution_name:
+        description: 'name of the solution to worked on from Power Platform'
+        required: true
+        default: SolutionName
+      env_url:
+        description: 'source environment url'
+        required: true
+        default: ''
+      tenant_id:
+        description: 'source tenant'
+        required: true
+        default: ''
+      secret_value:
+        description: 'app reg secret'
+        required: true
+        default: ''
+      app_id:
+        description: 'app reg id'
+        required: true
+        default: ''
+       #Do Not change these values
+      solution_exported_folder:
+        description: 'folder name for staging the exported solution *do not change*'
+        required: true
+        default: out/exported/
+      solution_folder:
+        description: 'staging the unpacked solution folder before check-in *do not change*'
+        required: true
+        default: out/solutions/
+      solution_target_folder: 
+       description: 'folder name to be created and checked in *do not change*'
+       required: true
+       default: solutions/
+env:
+#edit your values here
+  ENVIRONMENT_URL: ${{ github.event.inputs.env_url }}
+  CLIENT_ID: ${{ github.event.inputs.app_id }}
+  TENANT_ID: ${{ github.event.inputs.tenant_id }}
+permissions:
+  contents: write
+jobs:
+  export-from-dev:
+    runs-on: windows-latest
+    # or you can say runs-on: ubuntu-latest
+    env:
+      RUNNER_DEBUG: 1
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        lfs: true
+        
+    - name: Install Power Platform Tools
+      uses: microsoft/powerplatform-actions/actions-install@v1
+
+    - name: who-am-i action
+      uses: microsoft/powerplatform-actions/who-am-i@v1
+      with:
+        environment-url: ${{ github.event.inputs.env_url }}
+        app-id: ${{ github.event.inputs.app_id }}
+        client-secret: ${{ github.event.inputs.secret_value }}
+        tenant-id: ${{ github.event.inputs.tenant_id }}
+
+
+    - name: export-solution action
+      uses: microsoft/powerplatform-actions/export-solution@v1
+      with:
+        environment-url: ${{env.ENVIRONMENT_URL}}
+        app-id: ${{env.CLIENT_ID}}
+        client-secret: ${{ github.event.inputs.secret_value }}
+        tenant-id: ${{env.TENANT_ID}}
+        solution-name: ${{ github.event.inputs.solution_name }}
+        solution-output-file: ${{ github.event.inputs.solution_exported_folder}}/${{ github.event.inputs.solution_name }}.zip
+
+    - name: unpack-solution action
+      uses: microsoft/powerplatform-actions/unpack-solution@v1
+      with:
+        solution-file: ${{ github.event.inputs.solution_exported_folder}}/${{ github.event.inputs.solution_name }}.zip
+        solution-folder: ${{ github.event.inputs.solution_folder}}/${{ github.event.inputs.solution_name }}
+        solution-type: 'Unmanaged'
+        overwrite-files: true
+
+    - name: branch-solution, prepare it for a PullRequest
+      uses: microsoft/powerplatform-actions/branch-solution@v1
+      with:
+        solution-folder: ${{ github.event.inputs.solution_folder}}/${{ github.event.inputs.solution_name }}
+        solution-target-folder: ${{ github.event.inputs.solution_target_folder}}/${{ github.event.inputs.solution_name }}
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        allow-empty-commit: true
+      
+
+    - name: Auto-merge branch to main
+      shell: pwsh
+      run: |
+        git config user.name "hiram admin"
+        git config user.email "v-hboujaoude@microsoft.com"
+
+        # Fetch all branches
+        git fetch --all
+
+        # Find the latest branch created (assuming it's the only new one)
+        $branches = git branch -r | Where-Object { $_ -notmatch 'main' -and $_ -notmatch 'HEAD' }
+        $latestBranch = ($branches | Sort-Object)[-1].Trim()
+        $branchName = $latestBranch -replace 'origin/', ''
+
+        Write-Host "Merging branch: $branchName into main"
+
+        # Checkout the new branch
+        git checkout $branchName
+
+        # Checkout main and merge the new branch
+        git checkout main
+        git merge $branchName --no-ff -m "Auto-merged $branchName into main"
+        git push origin main
+        git push origin --delete $branchName
+
